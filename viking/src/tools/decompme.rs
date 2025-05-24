@@ -477,7 +477,11 @@ fn main() -> Result<()> {
     eprintln!("{}", ui::format_symbol_name(&function_info.name()).bold());
 
     let orig_elf = elf::load_orig_elf(version)?;
-    let function = elf::get_function(&orig_elf, function_info.offset, function_info.size as u64)?;
+    let function = elf::get_function(
+        &orig_elf,
+        function_info.offset as u64,
+        function_info.size as u64,
+    )?;
     let disassembly = get_disassembly(function_info, &function)?;
     let function_offset = function_info.addr;
 
@@ -489,7 +493,7 @@ fn main() -> Result<()> {
     let source_file = args
         .source_file
         .clone()
-        .or_else(|| deduce_source_file_from_debug_info(&decomp_elf, &function_info.name()).ok());
+        .or_else(|| deduce_source_file_from_debug_info(&decomp_elf, function_info.name()).ok());
 
     let diff_flags = vec![format!("--adjust-vma={:#x}", function_offset)];
 

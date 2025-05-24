@@ -178,7 +178,7 @@ pub struct FunctionChecker<'a, 'functions, 'orig_elf, 'decomp_elf> {
     decomp_addr_to_name_map: Lazy<elf::AddrToNameMap<'decomp_elf>>,
 
     known_data_symbols: KnownDataSymbolMap,
-    known_functions: FxHashMap<u64, &'functions functions::Info>,
+    known_functions: FxHashMap<u32, &'functions functions::Info>,
 
     pub orig_elf: &'orig_elf elf::OwnedElf,
     orig_got_section: Option<&'orig_elf goblin::elf::SectionHeader>,
@@ -433,7 +433,7 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
             }
         }
 
-        let Some(info) = self.known_functions.get(&orig_addr) else {
+        let Some(info) = self.known_functions.get(&(orig_addr as u32)) else {
             // should not happen, but loudly complain (and only fail single function) if it still happens
             return Some(MismatchCause::InternalError(format!(
                 "failed to resolve orig function at address {:x}",

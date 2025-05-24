@@ -325,7 +325,7 @@ pub fn get_plt_functions(elf: &OwnedElf) -> Result<Vec<crate::functions::Info>> 
             .get_at(sym.st_name)
             .context("Failed to get dynstr")?;
         functions.push(Info {
-            offset: addr as u64, size: 0x10, label: AddressLabel::Single(name.to_string()), 
+            offset: addr.try_into().unwrap(), size: 0x10, label: AddressLabel::Single(name.to_string()), 
             status: Status::Library, lazy: false, guess: false,
         });
     }
