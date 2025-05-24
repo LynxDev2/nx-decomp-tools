@@ -192,13 +192,13 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
         decomp_elf: &'decomp_elf elf::OwnedElf,
         decomp_symtab: &'a elf::SymbolTableByName<'decomp_elf>,
         decomp_glob_data_table: elf::GlobDataTable,
-        functions: &'functions [functions::Info],
+        functions: &'functions Vec<functions::Info>,
         version: Option<&str>,
     ) -> Result<Self> {
         let mut known_data_symbols = KnownDataSymbolMap::new();
         known_data_symbols.load(get_data_symbol_csv_path(version)?.as_path(), decomp_symtab)?;
 
-        let known_functions = functions::make_known_function_map(functions);
+        let known_functions = functions::make_known_function_map(&functions);
 
         let decomp_plt_section = elf::find_section(decomp_elf, ".plt").ok();
         let orig_got_section = elf::find_section(orig_elf, ".got").ok();
@@ -422,7 +422,10 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
 
     /// Returns None on success and a MismatchCause on failure.
     fn check_function_call(&self, orig_addr: u64, decomp_addr: u64) -> Option<MismatchCause> {
-        if !repo::get_config().check_unimplemented_references.unwrap_or(true) {
+        if !repo::get_config()
+            .check_unimplemented_references
+            .unwrap_or(true)
+        {
             // 0x10 = size of one plt entry
             if elf::is_in_section(self.decomp_plt_section?, decomp_addr, 0x10) {
                 // we are deliberately ignoring PLT references, so do not check their target
@@ -432,11 +435,12 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
 
         let Some(info) = self.known_functions.get(&orig_addr) else {
             // should not happen, but loudly complain (and only fail single function) if it still happens
-            return Some(MismatchCause::InternalError(
-                format!("failed to resolve orig function at address {:x}", orig_addr)
-            ))
+            return Some(MismatchCause::InternalError(format!(
+                "failed to resolve orig function at address {:x}",
+                orig_addr
+            )));
         };
-        let name = info.name.as_str();
+        let name = info.name();
         if name.is_empty() {
             // called some function that is not named in the binary or function list
             let actual_symbol_name = self.translate_decomp_addr_to_name(decomp_addr);
@@ -446,10 +450,14 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
                 actual_ref_in_decomp: decomp_addr,
                 expected_symbol_name: "<unnamed function>".to_string(),
                 actual_symbol_name: actual_symbol_name.unwrap_or("unknown").to_string(),
-            }))
+            }));
         }
-        let Some(expected) = self.decomp_symtab.get(name).map(|sym| sym.st_value)
-                .or_else(|| elf::plt_name_to_addr(self.decomp_elf, name)) else {
+        let Some(expected) = self
+            .decomp_symtab
+            .get(name.as_str())
+            .map(|sym| sym.st_value)
+            .or_else(|| elf::plt_name_to_addr(self.decomp_elf, name))
+        else {
             let actual_symbol_name = self.translate_decomp_addr_to_name(decomp_addr);
             return Some(MismatchCause::FunctionCall(ReferenceDiff {
                 referenced_symbol: orig_addr,
@@ -457,7 +465,7 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
                 actual_ref_in_decomp: decomp_addr,
                 expected_symbol_name: name.to_string(),
                 actual_symbol_name: actual_symbol_name.unwrap_or("unknown").to_string(),
-            }))
+            }));
         };
 
         if decomp_addr != expected {
@@ -468,7 +476,7 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
                 actual_ref_in_decomp: decomp_addr,
                 expected_symbol_name: name.to_string(),
                 actual_symbol_name: actual_symbol_name.unwrap_or("unknown").to_string(),
-            }))
+            }));
         }
 
         None
@@ -548,6 +556,8 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
             let map = elf::make_addr_to_name_map(self.decomp_elf).ok();
             map.unwrap_or_default()
         });
-        map.get(&decomp_addr).copied().or_else(|| elf::plt_addr_to_name(self.decomp_elf, decomp_addr))
+        map.get(&decomp_addr)
+            .copied()
+            .or_else(|| elf::plt_addr_to_name(self.decomp_elf, decomp_addr))
     }
 }

@@ -358,7 +358,7 @@ fn create_scratch(
         target_asm: disassembly.to_string(),
         source_code: source_code.to_string(),
         context: context.to_string(),
-        diff_label: Some(info.name.clone()),
+        diff_label: Some(info.name().clone()),
         compiler: decomp_me_config.compiler_name.clone(),
         compiler_flags: compiler_flags.map(|s| s.to_string()),
         preset: decomp_me_config.preset_id.clone(),
@@ -424,7 +424,7 @@ impl std::fmt::Display for InstructionWrapper {
 fn get_disassembly(function_info: &functions::Info, function: &elf::Function) -> Result<String> {
     let mut disassembly = String::new();
 
-    disassembly += &function_info.name;
+    disassembly += &function_info.name();
     disassembly += ":\n";
 
     let iter = bad64::disasm(function.code, function.addr);
@@ -464,19 +464,20 @@ fn main() -> Result<()> {
 
     let version = args.version.as_deref();
     let decomp_elf = elf::load_decomp_elf(version)?;
-    let functions = functions::get_functions(version)?;
+    let file_list = functions::parse_file_list(&functions::get_file_list_path(version))?;
+    let functions = functions::get_functions(&file_list);
     let decomp_symtab = elf::make_symbol_map_by_name(&decomp_elf)?;
 
     let filtered_functions = functions::filter_candidates_by_symtab(&functions, &decomp_symtab);
     let function_info =
         ui::fuzzy_search_function_interactively(&filtered_functions, &args.function_name)?;
 
-    let demangled_name = functions::demangle_str(&function_info.name)?;
+    let demangled_name = functions::demangle_str(&function_info.name())?;
 
-    eprintln!("{}", ui::format_symbol_name(&function_info.name).bold());
+    eprintln!("{}", ui::format_symbol_name(&function_info.name()).bold());
 
     let orig_elf = elf::load_orig_elf(version)?;
-    let function = elf::get_function(&orig_elf, function_info.addr, function_info.size as u64)?;
+    let function = elf::get_function(&orig_elf, function_info.offset, function_info.size as u64)?;
     let disassembly = get_disassembly(function_info, &function)?;
     let function_offset = function_info.addr;
 
@@ -488,7 +489,7 @@ fn main() -> Result<()> {
     let source_file = args
         .source_file
         .clone()
-        .or_else(|| deduce_source_file_from_debug_info(&decomp_elf, &function_info.name).ok());
+        .or_else(|| deduce_source_file_from_debug_info(&decomp_elf, &function_info.name()).ok());
 
     let diff_flags = vec![format!("--adjust-vma={:#x}", function_offset)];
 
@@ -503,7 +504,7 @@ fn main() -> Result<()> {
             .context("failed to get translation unit")?;
 
         let function_text = tu
-            .try_get_and_remove_function(&function_info.name)
+            .try_get_and_remove_function(function_info.name())
             .unwrap_or_else(|err| {
                 ui::print_note(&format!("Unable to automatically move function to source code tab (caused by error: {})", &err));
                 "// move the target function from the context to the source tab".to_string()
@@ -514,8 +515,8 @@ fn main() -> Result<()> {
          // original address: {:#x} \n\
          \n\
          {}",
-            &function_info.name,
-            function_info.get_start(),
+            function_info.name(),
+            function_info.offset,
             &function_text
         );
 
