@@ -12,6 +12,8 @@ use lexopt::prelude::*;
 use rayon::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::sync::atomic;
 use viking::checks::FunctionChecker;
 use viking::checks::Mismatch;
@@ -348,9 +350,12 @@ fn check_function(
                     let ctx = addr2line_ctx.as_ref().context(
                         "Addr2line context should not be None when checking mismatch comments",
                     )?;
-                    let (file, line) =
-                        elf::find_file_and_line_by_symbol(checker.decomp_elf, ctx, &function.name)?;
-                    check_mismatch_comment(&file, line, &function.name)?;
+                    let (file, line) = elf::find_file_and_line_by_symbol(
+                        checker.decomp_elf,
+                        ctx,
+                        function.name(),
+                    )?;
+                    check_mismatch_comment(&file, line, function.name())?;
                 }
                 ui::print_note(&format!(
                     "function {} is marked as {} but mismatches",

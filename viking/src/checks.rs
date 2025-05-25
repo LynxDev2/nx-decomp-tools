@@ -454,7 +454,7 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
         }
         let Some(expected) = self
             .decomp_symtab
-            .get(name.as_str())
+            .get(name)
             .map(|sym| sym.st_value)
             .or_else(|| elf::plt_name_to_addr(self.decomp_elf, name))
         else {

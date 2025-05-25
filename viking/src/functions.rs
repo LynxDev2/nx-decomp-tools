@@ -66,7 +66,7 @@ impl Info {
     pub fn is_decompiled(&self) -> bool {
         !matches!(self.status, Status::NotDecompiled | Status::Library)
     }
-    pub fn name(&self) -> &String {
+    pub fn name(&self) -> &str {
         match &self.label {
             AddressLabel::Single(label) => label,
             AddressLabel::Multi(labels) => labels.first().unwrap(),
@@ -202,6 +202,6 @@ pub fn filter_candidates_by_symtab<'a>(
 ) -> Vec<&'a Info> {
     candidates
         .iter()
-        .filter(|function| decomp_symtab.contains_key(function.name().as_str()))
+        .filter(|function| decomp_symtab.contains_key(function.name()))
         .collect()
 }
