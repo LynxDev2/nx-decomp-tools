@@ -198,7 +198,7 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
         let mut known_data_symbols = KnownDataSymbolMap::new();
         known_data_symbols.load(get_data_symbol_csv_path(version)?.as_path(), decomp_symtab)?;
 
-        let known_functions = functions::make_known_function_map(&functions);
+        let known_functions = functions::make_known_function_map(functions);
 
         let decomp_plt_section = elf::find_section(decomp_elf, ".plt").ok();
         let orig_got_section = elf::find_section(orig_elf, ".got").ok();
