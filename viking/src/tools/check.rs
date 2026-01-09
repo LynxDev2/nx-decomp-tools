@@ -67,6 +67,7 @@ fn main() -> Result<()> {
     let mut decomp_symtab = None;
     let mut decomp_glob_data_table = None;
     let mut file_list = None;
+    let mut plt_functions = None;
 
     rayon::scope(|s| {
         s.spawn(|_| decomp_symtab = Some(elf::make_symbol_map_by_name(&decomp_elf)));
@@ -76,19 +77,20 @@ fn main() -> Result<()> {
                 get_file_list_path(version).as_path(),
             ));
         });
+        s.spawn(|_| plt_functions = Some(elf::get_plt_functions(&orig_elf)));
     });
 
     let decomp_symtab = decomp_symtab
         .unwrap()
         .context("failed to make symbol map")?;
-
     let decomp_glob_data_table = decomp_glob_data_table
         .unwrap()
         .context("failed to make global data table")?;
-
     let file_list = file_list.unwrap().context("failed to load file list")?;
+    let plt_functions = plt_functions.unwrap().context("failed to load plt functions")?;
 
-    let functions = functions::get_functions(&file_list);
+    let file_functions = functions::get_functions(&file_list);
+    let functions = vec![file_functions, plt_functions].concat();
 
     let checker = FunctionChecker::new(
         &orig_elf,
