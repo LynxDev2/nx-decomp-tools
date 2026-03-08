@@ -66,12 +66,12 @@ pub fn process_type_info(type_info_map: TypeInfoMap) -> TypeInfoMap {
     type_info_map
         .iter()
         .filter_map(|(class, (base_classes, v))| {
-            let class = demangle_str(&class).ok()?.to_string();
+            let class = demangle_str(class).ok()?.to_string();
             let base_classes: Vec<_> = base_classes
-                .into_iter()
+                .iter()
                 .filter_map(|bc| {
                     Some(
-                        demangle_str(&bc)
+                        demangle_str(bc)
                             .ok()?
                             .strip_prefix("typeinfo for ")?
                             .to_string(),
@@ -110,7 +110,10 @@ pub fn generate_header(
         }
 
         if function.name().is_empty() {
-            header.push_str(&format!("\n// Unhandled unnamed function at: {:#X}", function.offset));
+            header.push_str(&format!(
+                "\n// Unhandled unnamed function at: {:#X}",
+                function.offset
+            ));
         }
 
         let Ok(demangled) = functions::demangle_str(function.name()) else {
@@ -152,15 +155,15 @@ pub fn generate_header(
                 continue;
             }
             let is_class = !part.starts_with("al") && part.chars().any(|c| c.is_uppercase());
-            let base_classes = is_class
-                .then(|| {
-                    type_info_map
-                        .get(ident_parts[..i + 1].join("::").as_str())
-                        .cloned()
-                        .unwrap_or_default()
-                })
-                .unwrap_or_default()
-                .0;
+            let base_classes = if is_class {
+                type_info_map
+                    .get(ident_parts[..i + 1].join("::").as_str())
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                Default::default()
+            }
+            .0;
             current_namespace.push(NamespaceData {
                 name: part.clone(),
                 forward_decls: HashSet::new(),
@@ -276,7 +279,7 @@ pub fn generate_header(
                 namespace_part.functions.push(fn_text);
             }
         } else {
-            header.push_str("\n");
+            header.push('\n');
             header.push_str(&fn_text);
         }
     }
@@ -330,7 +333,7 @@ fn handle_closing_namespace(
         let part = namespace[i].clone();
         if ident_parts.is_none_or(|parts| parts.get(i).is_none_or(|p| p != &part.name)) {
             if i == 0 {
-                header.push_str("\n");
+                header.push('\n');
                 header.push_str(&part.to_string());
             } else {
                 namespace[i - 1].finished_sub_namespaces.push(part);

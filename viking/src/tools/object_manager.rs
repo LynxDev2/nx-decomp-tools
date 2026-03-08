@@ -29,10 +29,12 @@ fn try_get_typeinfo(args: &[String]) -> TypeInfoMap {
         .ok()
         .and_then(|file| rkyv::from_bytes::<_, rancor::Error>(file.as_slice()).ok());
 
-    type_info.map(generate_header::process_type_info).unwrap_or_else(|| {
-        eprintln!("Warning: Could not parse typeinfo, header generation will be limited");
-        TypeInfoMap::new()
-    })
+    type_info
+        .map(generate_header::process_type_info)
+        .unwrap_or_else(|| {
+            eprintln!("Warning: Could not parse typeinfo, header generation will be limited");
+            TypeInfoMap::new()
+        })
 }
 
 fn generate_header(object_path: &str, file_list: &FileList, type_info: &TypeInfoMap) -> bool {
@@ -50,7 +52,7 @@ fn generate_header(object_path: &str, file_list: &FileList, type_info: &TypeInfo
     }
 
     let functions: Box<_> = object.text_section.iter().collect();
-    let res = generate_header::generate_header(&header_path, &functions, &type_info);
+    let res = generate_header::generate_header(&header_path, &functions, type_info);
 
     match res {
         Ok(success) if !success => {
@@ -83,7 +85,9 @@ fn main() -> Result<()> {
         "viewer" => {
             let decomp_elf = elf::load_decomp_elf(None)?;
             Box::new(tui::file_list_viewer::FileListViewer::new(
-                &file_list, decomp_elf, try_get_typeinfo(&args),
+                &file_list,
+                decomp_elf,
+                try_get_typeinfo(args),
             ))
         }
         "editor" => Box::new(tui::file_list_editor::FileListEditor::new(&mut file_list)),
@@ -91,7 +95,7 @@ fn main() -> Result<()> {
             let Some(path) = args.get(1) else {
                 bail!("No object specified")
             };
-            let type_info = try_get_typeinfo(&args);
+            let type_info = try_get_typeinfo(args);
             if !generate_header(path, &file_list, &type_info) {
                 std::process::exit(1);
             } else {

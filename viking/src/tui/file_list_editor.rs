@@ -125,7 +125,7 @@ impl<'a> FileListEditor<'a> {
 
     fn save_file_list(&self) {
         functions::write_functions_to_path(
-            &functions::get_file_list_path(None).as_path(),
+            functions::get_file_list_path(None).as_path(),
             self.file_list.clone(),
         )
         .expect("Failed to save file list");

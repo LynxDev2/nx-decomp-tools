@@ -301,7 +301,7 @@ impl TuiWindow for FileListViewer<'_> {
                     if path.starts_with("Library/") || path.starts_with("Project/") {
                         path.insert_str(0, "lib/al/");
                     }
-                    let _ = generate_header::generate_header(&path, &infos, &self.type_info_map);
+                    let _ = generate_header::generate_header(&path, infos, &self.type_info_map);
                 }
             }
             KeyCode::Char('O') => {

@@ -83,7 +83,7 @@ fn parse_elf_faster(bytes: &[u8]) -> Result<Elf<'_>> {
     for shdr in &elf.section_headers {
         if shdr.sh_type == section_header::SHT_SYMTAB {
             let size = shdr.sh_entsize;
-            let count = if size == 0 { 0 } else { shdr.sh_size / size };
+            let count = shdr.sh_size.checked_div(size).unwrap_or(0);
             elf.syms = Symtab::parse(bytes, shdr.sh_offset as usize, count as usize, ctx)?;
         }
     }
@@ -227,7 +227,7 @@ pub fn make_addr_to_name_map(elf: &OwnedElf) -> Result<AddrToNameMap<'_>> {
 fn parse_symtab<'a>(elf: &'a OwnedElf, shdr: &'a SectionHeader) -> Result<Symtab<'a>> {
     let bytes = &elf.as_owner().1;
     let size = shdr.sh_entsize;
-    let count = if size == 0 { 0 } else { shdr.sh_size / size };
+    let count = shdr.sh_size.checked_div(size).unwrap_or(0);
 
     let syms = Symtab::parse(
         bytes,

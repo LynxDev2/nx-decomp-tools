@@ -115,7 +115,7 @@ impl Info {
         cmd.current_dir(repo::get_tools_path()?)
             .arg("-I")
             .arg("-e")
-            .arg(&name)
+            .arg(name)
             .arg(format!("0x{:016x}", self.offset))
             .arg(format!("0x{:016x}", self.offset + self.size))
             .args(differ_args);
