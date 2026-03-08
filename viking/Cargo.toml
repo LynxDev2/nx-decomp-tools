@@ -1,6 +1,6 @@
 [package]
 name = "viking"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2021"
 
 [profile.release]
@@ -40,6 +40,9 @@ tempfile = "3.20.0"
 serde_yml = "0.0.12"
 regex = "1.11.1"
 serde-tuple-vec-map = "1.0.1"
+ratatui = "0.29.0"
+tui-textarea = "0.7.0"
+rkyv = "0.8.15"
 
 [[bin]]
 name = "check"
@@ -52,3 +55,7 @@ path = "src/tools/list_symbols.rs"
 [[bin]]
 name = "decompme"
 path = "src/tools/decompme.rs"
+
+[[bin]]
+name = "object-manager"
+path = "src/tools/object_manager.rs"

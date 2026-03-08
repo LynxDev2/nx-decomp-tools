@@ -432,7 +432,7 @@ fn check_single(
     }
 
     if should_show_diff {
-        show_asm_differ(function, name, &args.other_args, version)?;
+        function.show_asm_differ_for(Some(name), &args.other_args, version)?;
 
         maybe_mismatch =
             rediff_function_after_differ(functions, &orig_fn, name, &maybe_mismatch, version)
@@ -714,33 +714,6 @@ fn resolve_unknown_fn_interactively(
 
         Ok(candidates[selection].0.to_string())
     }
-}
-
-fn show_asm_differ(
-    function: &functions::Info,
-    name: &str,
-    differ_args: &[String],
-    version: Option<&str>,
-) -> Result<()> {
-    let differ_path = repo::get_tools_path()?.join("asm-differ").join("diff.py");
-    let mut cmd = std::process::Command::new(&differ_path);
-
-    cmd.current_dir(repo::get_tools_path()?)
-        .arg("-I")
-        .arg("-e")
-        .arg(name)
-        .arg(format!("0x{:016x}", function.offset))
-        .arg(format!("0x{:016x}", function.offset + function.size))
-        .args(differ_args);
-
-    if let Some(version) = version {
-        cmd.args(["--version", version]);
-    }
-
-    cmd.status()
-        .with_context(|| format!("failed to launch asm-differ: {:?}", &differ_path))?;
-
-    Ok(())
 }
 
 fn rediff_function_after_differ(

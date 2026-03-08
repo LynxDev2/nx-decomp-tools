@@ -1,5 +1,6 @@
 use crate::{elf, repo};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use ratatui::style::{Style, Stylize};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize, Serializer};
@@ -18,12 +19,22 @@ pub enum Status {
 impl Status {
     pub fn description(&self) -> &'static str {
         match &self {
-            Status::Matching => "matching",
-            Status::NonMatchingMinor => "non-matching (minor)",
-            Status::NonMatchingMajor => "non-matching (major)",
-            Status::NotDecompiled => "not decompiled",
-            Status::Wip => "WIP",
-            Status::Library => "library function",
+            Self::Matching => "matching",
+            Self::NonMatchingMinor => "non-matching (minor)",
+            Self::NonMatchingMajor => "non-matching (major)",
+            Self::NotDecompiled => "not decompiled",
+            Self::Wip => "WIP",
+            Self::Library => "library function",
+        }
+    }
+    pub fn to_list_item_style(&self, is_selected: bool) -> Style {
+        match (self, is_selected) {
+            (Self::NotDecompiled, false) => Style::new().red(),
+            (Self::NotDecompiled, true) => Style::new().black().bold().on_red(),
+            (Self::Matching, false) => Style::new().green(),
+            (Self::Matching, true) => Style::new().black().bold().on_green(),
+            (_, false) => Style::new().yellow(),
+            (_, true) => Style::new().black().bold().on_yellow(),
         }
     }
 }
@@ -61,6 +72,25 @@ pub struct Object {
     pub text_section: Vec<Info>,
 }
 
+impl std::fmt::Display for Info {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} {}",
+            demangle_str(self.name()).unwrap_or_else(|_| self.name().to_string()),
+            self.status.description()
+        )?;
+
+        if self.guess {
+            f.write_str(" GUESS")?;
+        }
+        if self.lazy {
+            f.write_str(" LAZY")?;
+        }
+        Ok(())
+    }
+}
+
 impl Info {
     pub fn is_decompiled(&self) -> bool {
         !matches!(self.status, Status::NotDecompiled | Status::Library)
@@ -70,6 +100,34 @@ impl Info {
             AddressLabel::Single(label) => label,
             AddressLabel::Multi(labels) => labels.first().unwrap(),
         }
+    }
+
+    pub fn show_asm_differ_for(
+        &self,
+        alternative_name: Option<&str>,
+        differ_args: &[String],
+        version: Option<&str>,
+    ) -> Result<()> {
+        let differ_path = repo::get_tools_path()?.join("asm-differ").join("diff.py");
+        let mut cmd = std::process::Command::new(&differ_path);
+        let name = alternative_name.unwrap_or_else(|| self.name());
+
+        cmd.current_dir(repo::get_tools_path()?)
+            .arg("-I")
+            .arg("-e")
+            .arg(&name)
+            .arg(format!("0x{:016x}", self.offset))
+            .arg(format!("0x{:016x}", self.offset + self.size))
+            .args(differ_args);
+
+        if let Some(version) = version {
+            cmd.args(["--version", version]);
+        }
+
+        cmd.status()
+            .with_context(|| format!("failed to launch asm-differ: {:?}", &differ_path))?;
+
+        Ok(())
     }
 }
 
