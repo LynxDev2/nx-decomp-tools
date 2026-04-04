@@ -1,10 +1,10 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     ffi::{c_char, CStr},
     fs::File,
     ops::Range,
-    path::Path,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use addr2line::{fallible_iterator::FallibleIterator, LookupResult};
@@ -25,7 +25,7 @@ use rustc_hash::FxHashMap;
 use crate::repo;
 
 pub type OwnedElf = OwningHandle<Box<(File, Mmap)>, Box<Elf<'static>>>;
-pub type SymbolTableByName<'a> = HashMap<&'a str, goblin::elf::Sym>;
+pub type SymbolTableByName<'a> = HashMap<Cow<'a, str>, goblin::elf::Sym>;
 pub type SymbolTableByAddr = FxHashMap<u64, goblin::elf::Sym>;
 pub type AddrToNameMap<'a> = FxHashMap<u64, &'a str>;
 pub type GlobDataTable = FxHashMap<u64, u64>;
@@ -192,8 +192,12 @@ pub fn make_symbol_map_by_name(elf: &OwnedElf) -> Result<SymbolTableByName<'_>> 
     let strtab = SymbolStringTable::from_elf(elf)?;
 
     for symbol in elf.syms.iter().filter(filter_out_useless_syms) {
-        map.entry(strtab.get_string(symbol.st_name))
-            .or_insert(symbol);
+        let sym_str = strtab.get_string(symbol.st_name);
+        if map.contains_key(sym_str) {
+            map.insert(Cow::Owned(format!("{sym_str}_d{}", symbol.st_name)), symbol);
+        } else {
+            map.insert(Cow::Borrowed(sym_str), symbol);
+        }
     }
     Ok(map)
 }
@@ -328,10 +332,24 @@ pub fn get_function_by_name<'a>(
     elf: &'a OwnedElf,
     symbols: &SymbolTableByName,
     name: &str,
+    expected_object: &str,
+    symbol_with_duplicates: bool,
+    addr2line_ctx: Option<&Addr2LineContext>,
 ) -> Result<Function<'a>> {
-    let symbol = symbols
-        .get(&name)
-        .ok_or_else(|| anyhow!("unknown function: {}", name))?;
+    let symbol = if addr2line_ctx.is_some() && symbol_with_duplicates {
+        let candidates = symbols
+            .iter()
+            .filter(|(n, _)| n.as_ref() == name || n.starts_with(&format!("{name}_d")))
+            .map(|(_, s)| s);
+        find_correct_decomp_sym_by_object(candidates, expected_object, addr2line_ctx.unwrap())?
+            .with_context(|| {
+                format!("Unable to find function: {name} in decomp object: {expected_object}")
+            })?
+    } else {
+        symbols
+            .get(name)
+            .with_context(|| format!("unknown function: {}", name))?
+    };
     get_function(elf, symbol.st_value, symbol.st_size)
 }
 
@@ -351,7 +369,11 @@ pub fn find_file_and_line_by_symbol(
 ) -> Result<(String, u32)> {
     let symbol = find_function_symbol_by_name(elf, sym)?;
 
-    let LookupResult::Output(frames) = ctx.find_frames(symbol.st_value) else {
+    find_file_and_line_by_elf_sym(ctx, &symbol)
+}
+
+fn find_file_and_line_by_elf_sym(ctx: &Addr2LineContext, sym: &Sym) -> Result<(String, u32)> {
+    let LookupResult::Output(frames) = ctx.find_frames(sym.st_value) else {
         bail!("unexpect LookupResult (maybe input elf has split dwarf?)");
     };
 
@@ -366,4 +388,18 @@ pub fn find_file_and_line_by_symbol(
     let file = loc.file.context("no file found")?;
     let line = loc.line.context("no line found")?;
     Ok((file.to_string(), line))
+}
+
+fn find_correct_decomp_sym_by_object<'a, I: IntoIterator<Item = &'a Sym>>(
+    candidates: I,
+    expected_object: &str,
+    addr2line_ctx: &Addr2LineContext,
+) -> Result<Option<&'a Sym>> {
+    for sym in candidates {
+        let (file_path, _) = find_file_and_line_by_elf_sym(addr2line_ctx, sym)?;
+        if file_path.ends_with(&expected_object.replace(".o", ".cpp")) {
+            return Ok(Some(sym));
+        }
+    }
+    Ok(None)
 }

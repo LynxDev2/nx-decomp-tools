@@ -103,7 +103,18 @@ fn main() -> Result<()> {
     if let Some(func) = &args.function {
         check_single(&checker, &functions, file_list, func, &args)?;
     } else {
-        check_all(&checker, file_list, &args)?;
+        let mut sym_names: Vec<_> = functions.iter().map(|f| f.name()).collect();
+        sym_names.sort_unstable();
+
+        // Get all the function symbols that have at least one duplicate in the file list
+        let duplicate_syms: HashSet<_> = sym_names
+            .into_iter()
+            .dedup_with_count()
+            .filter(|(c, _)| *c > 1)
+            .map(|(_, s)| s)
+            .collect();
+
+        check_all(&checker, file_list, &duplicate_syms, &args)?;
     }
 
     Ok(())
@@ -242,7 +253,9 @@ fn check_function(
     checker: &FunctionChecker,
     cs: &mut capstone::Capstone,
     function: &functions::Info,
-    addr2line_ctx: &Option<elf::Addr2LineContext>,
+    expected_object: &str,
+    has_duplicate_symbol: bool,
+    addr2line_ctx: &elf::Addr2LineContext,
     args: &Args,
 ) -> Result<CheckResult> {
     let mut name = "";
@@ -250,13 +263,26 @@ fn check_function(
 
     match &function.label {
         functions::AddressLabel::Single(label) => {
-            decomp_fn = elf::get_function_by_name(checker.decomp_elf, checker.decomp_symtab, label);
+            decomp_fn = elf::get_function_by_name(
+                checker.decomp_elf,
+                checker.decomp_symtab,
+                label,
+                expected_object,
+                has_duplicate_symbol,
+                Some(addr2line_ctx),
+            );
             name = label;
         }
         functions::AddressLabel::Multi(labels) => {
             for label in labels {
-                decomp_fn =
-                    elf::get_function_by_name(checker.decomp_elf, checker.decomp_symtab, label);
+                decomp_fn = elf::get_function_by_name(
+                    checker.decomp_elf,
+                    checker.decomp_symtab,
+                    label,
+                    expected_object,
+                    has_duplicate_symbol,
+                    Some(addr2line_ctx),
+                );
                 if decomp_fn.is_ok() {
                     name = label;
                     break;
@@ -342,12 +368,11 @@ fn check_function(
                 return Ok(CheckResult::MatchWarn);
             } else {
                 if args.check_mismatch_comments {
-                    let ctx = addr2line_ctx.as_ref().context(
-                        "Addr2line context should not be None when checking mismatch comments",
-                    )?;
-                    if let Ok((file, line)) =
-                        elf::find_file_and_line_by_symbol(checker.decomp_elf, ctx, function.name())
-                    {
+                    if let Ok((file, line)) = elf::find_file_and_line_by_symbol(
+                        checker.decomp_elf,
+                        addr2line_ctx,
+                        function.name(),
+                    ) {
                         if !repo::get_config()
                             .no_object_check_for
                             .clone()
@@ -404,13 +429,20 @@ fn check_single(
         &resolved_name
     };
 
-    let decomp_fn = elf::get_function_by_name(checker.decomp_elf, checker.decomp_symtab, name)
-        .with_context(|| {
-            format!(
-                "failed to get decomp function: {}",
-                ui::format_symbol_name(name)
-            )
-        })?;
+    let decomp_fn = elf::get_function_by_name(
+        checker.decomp_elf,
+        checker.decomp_symtab,
+        name,
+        "",
+        false,
+        None,
+    )
+    .with_context(|| {
+        format!(
+            "failed to get decomp function: {}",
+            ui::format_symbol_name(name)
+        )
+    })?;
 
     let orig_fn = elf::get_function(
         checker.orig_elf,
@@ -465,6 +497,7 @@ fn check_single(
 fn check_all(
     checker: &FunctionChecker,
     mut file_list: functions::FileList,
+    duplicate_syms: &HashSet<&str>,
     args: &Args,
 ) -> Result<()> {
     if args.check_object_ordering {
@@ -499,21 +532,17 @@ fn check_all(
 
     file_list.par_iter_mut().try_for_each_init(
         || {
-            if !args.check_mismatch_comments && !args.check_placement {
-                return None;
-            }
             // addr2line structs can't be safely shared between threads, so we create one context
             // per thread (NOT per iteration)
-            let ctx = elf::create_addr2line_ctx_for(checker.decomp_elf).expect(
+            elf::create_addr2line_ctx_for(checker.decomp_elf).expect(
                 "The decomp elf should be valid, so creating an addr2line context should work",
-            );
-            Some(ctx)
+            )
         },
         |ctx, (object_name, object)| -> Result<()> {
             for function in object.text_section.iter_mut() {
                 let result = CAPSTONE.with(|cs| -> Result<()> {
                     let mut cs = cs.borrow_mut();
-                    let status = check_function(checker, &mut cs, function, ctx, args).unwrap();
+                    let status = check_function(checker, &mut cs, function, &object_name, duplicate_syms.contains(function.name()), ctx, args).unwrap();
                     match status {
                         CheckResult::MismatchError => {
                             failed.store(true, atomic::Ordering::Relaxed);
@@ -542,7 +571,6 @@ fn check_all(
                 }
 
                 if args.check_placement {
-                    let ctx = ctx.as_ref().unwrap();
                     let demangled_name = viking::functions::demangle_str(function.name()).unwrap_or(function.name().to_string());
                     let location_info = elf::find_file_and_line_by_symbol(checker.decomp_elf, ctx, function.name());
                     if let Ok((file_name, _)) = location_info {
@@ -658,9 +686,9 @@ fn resolve_unknown_fn_interactively(
 
     let mut candidates: Vec<_> = decomp_symtab
         .par_iter()
-        .filter(|(&name, &sym)| {
+        .filter(|(name, &sym)| {
             sym.st_type() == STT_FUNC
-                && functions::demangle_str(name)
+                && functions::demangle_str(&name)
                     .unwrap_or_else(|_| "".to_string())
                     .contains(ambiguous_name)
         })
@@ -668,7 +696,11 @@ fn resolve_unknown_fn_interactively(
 
     // Sort candidates by their name, then deduplicate them based on the address.
     // This ensures that e.g. C1 symbols take precedence over C2 symbols (if both are present).
-    candidates.sort_by_key(|(&name, &sym)| (name, sym.st_value));
+    candidates.sort_by(|(n1, s1), (n2, s2)| {
+        n1.as_ref()
+            .cmp(n2.as_ref())
+            .then_with(|| s1.st_value.cmp(&s2.st_value))
+    });
     candidates.dedup_by_key(|(_, &sym)| sym.st_value);
 
     // Build a set of functions that have already been decompiled and listed,
@@ -678,7 +710,7 @@ fn resolve_unknown_fn_interactively(
         .filter(|info| info.is_decompiled())
         .map(|info| info.name())
         .collect();
-    candidates.retain(|(&name, _)| !decompiled_functions.contains(name));
+    candidates.retain(|(name, _)| !decompiled_functions.contains(name.as_ref()));
 
     if candidates.is_empty() {
         return fail();
@@ -704,7 +736,7 @@ fn resolve_unknown_fn_interactively(
         let prompt = format!("{ambiguous_name} is ambiguous; did you mean:");
         let options = candidates
             .iter()
-            .map(|(&name, _)| ui::format_symbol_name(name))
+            .map(|(name, _)| ui::format_symbol_name(&name))
             .collect_vec();
 
         let selection = inquire::Select::new(&prompt, options)
@@ -763,13 +795,13 @@ fn rediff_function_after_differ(
 
     // And grab the possibly updated function code.
     // Note that the original function doesn't need to be reloaded.
-    let decomp_fn =
-        elf::get_function_by_name(&decomp_elf, &decomp_symtab, name).with_context(|| {
-            format!(
-                "failed to reload decomp function: {}",
-                ui::format_symbol_name(name)
-            )
-        })?;
+    let decomp_fn = elf::get_function_by_name(&decomp_elf, &decomp_symtab, name, "", false, None)
+        .with_context(|| {
+        format!(
+            "failed to reload decomp function: {}",
+            ui::format_symbol_name(name)
+        )
+    })?;
 
     // Invoke the checker again.
     let checker = FunctionChecker::new(
