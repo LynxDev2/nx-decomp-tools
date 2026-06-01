@@ -40,6 +40,8 @@ tempfile = "3.20.0"
 serde_yml = "0.0.12"
 regex = "1.11.1"
 serde-tuple-vec-map = "1.0.1"
+enum-map = "2.7.3"
+clap = { version = "4.6.1", features = ["derive"] }
 
 [[bin]]
 name = "check"
@@ -52,3 +54,7 @@ path = "src/tools/list_symbols.rs"
 [[bin]]
 name = "decompme"
 path = "src/tools/decompme.rs"
+
+[[bin]]
+name = "progress"
+path = "src/tools/progress.rs"

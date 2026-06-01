@@ -1,29 +1,37 @@
 use crate::{elf, repo};
 use anyhow::{bail, Result};
+use colored::Color;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize, Serializer};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, PartialEq, Eq, enum_map::Enum)]
 pub enum Status {
     Matching,
     NonMatchingMinor,
     NonMatchingMajor,
     NotDecompiled,
     Wip,
-    Library,
 }
 
 impl Status {
     pub fn description(&self) -> &'static str {
         match &self {
-            Status::Matching => "matching",
-            Status::NonMatchingMinor => "non-matching (minor)",
-            Status::NonMatchingMajor => "non-matching (major)",
-            Status::NotDecompiled => "not decompiled",
-            Status::Wip => "WIP",
-            Status::Library => "library function",
+            Self::Matching => "matching",
+            Self::NonMatchingMinor => "non-matching (minor)",
+            Self::NonMatchingMajor => "non-matching (major)",
+            Self::NotDecompiled => "not decompiled",
+            Self::Wip => "WIP",
+        }
+    }
+    pub fn color(&self) -> Color {
+        match &self {
+            Status::Matching => Color::Green,
+            Status::NonMatchingMinor => Color::Yellow,
+            Status::NonMatchingMajor => Color::Red,
+            Status::NotDecompiled => Color::White,
+            Status::Wip => Color::BrightYellow,
         }
     }
 }
@@ -63,7 +71,7 @@ pub struct Object {
 
 impl Info {
     pub fn is_decompiled(&self) -> bool {
-        !matches!(self.status, Status::NotDecompiled | Status::Library)
+        self.status != Status::NotDecompiled
     }
     pub fn name(&self) -> &str {
         match &self.label {
@@ -94,8 +102,12 @@ pub type FileList = Vec<(String, Object)>;
 struct FileListWrapper(#[serde(with = "tuple_vec_map")] FileList);
 
 pub fn parse_file_list(file_list_path: &Path) -> Result<FileList> {
-    let file_list_data = std::fs::read_to_string(file_list_path)?;
-    let file_list = serde_yml::from_str::<FileListWrapper>(&file_list_data)?;
+    let file_list_contents = std::fs::read_to_string(file_list_path)?;
+    parse_file_list_from_str(&file_list_contents)
+}
+
+pub fn parse_file_list_from_str(file_list_contents: &str) -> Result<FileList> {
+    let file_list = serde_yml::from_str::<FileListWrapper>(&file_list_contents)?;
     Ok(file_list.0)
 }
 

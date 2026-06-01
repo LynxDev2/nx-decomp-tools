@@ -267,7 +267,6 @@ fn check_function(
 
     match function.status {
         Status::NotDecompiled if decomp_fn.is_err() => return Ok(CheckResult::Ok),
-        Status::Library => return Ok(CheckResult::Ok),
         _ => (),
     }
 
@@ -370,8 +369,6 @@ fn check_function(
                 }
             }
         }
-
-        Status::Library => unreachable!(),
     };
 
     Ok(CheckResult::Ok)
@@ -391,10 +388,6 @@ fn check_single(
     let name = function.name();
 
     eprintln!("{}", ui::format_symbol_name(name).bold());
-
-    if matches!(function.status, Status::Library) {
-        bail!("L functions should not be decompiled");
-    }
 
     let resolved_name;
     let name = if checker.decomp_symtab.contains_key(name) {

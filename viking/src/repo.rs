@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use lazy_static::lazy_static;
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 
 #[derive(serde::Deserialize)]
 pub struct Config {
@@ -80,4 +80,17 @@ pub fn get_data_path(version: Option<&str>) -> Result<PathBuf> {
 
 pub fn get_build_path(version: Option<&str>) -> Result<PathBuf> {
     get_version_specific_dir_path("build", version)
+}
+
+pub fn get_file_contents_at_git_rev(rev: &str, path: &str) -> Result<String> {
+    let output = Command::new("git")
+        .current_dir(get_repo_root()?)
+        .arg("show")
+        .arg(format!("{rev}:{path}"))
+        .output()?;
+    if !output.status.success() {
+        bail!("Failed to get file {path} at rev {rev}");
+    }
+
+    Ok(String::from_utf8(output.stdout)?)
 }
