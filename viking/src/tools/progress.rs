@@ -10,10 +10,13 @@ use clap::Parser;
 use colored::Colorize;
 use enum_map::EnumMap;
 
+/// Print the current status or progress of a decomp project
 #[derive(Parser)]
 struct Args {
+    /// Don't show namespace progress
     #[arg(long)]
     no_namespace_progress: bool,
+    /// Compare progress to a git rev (defaults to HEAD when used)
     #[arg(
         long,
         short,
@@ -22,8 +25,10 @@ struct Args {
         num_args = 0..=1
     )]
     compare: String,
+    /// Only list what objects have changed (requires also using --compare)
     #[arg(long)]
     object_changes_only: bool,
+    /// Only show raw status data (STATUS=PERCENTAGE)
     #[arg(long)]
     raw_status_data_only: bool,
 }
