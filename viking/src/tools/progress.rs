@@ -68,30 +68,17 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn print_current_progress(current_stats: &ProgressStats, git_rev_stats: Option<&ProgressStats>) {
-    let mut completed_objects_str = format!(
-        "{}/{}",
-        current_stats
-            .remaining_functions
-            .values()
-            .filter(|&&c| c == 0)
-            .count(),
-        current_stats.object_count
-    );
+    let completed = |s: &ProgressStats| s.remaining_functions.values().filter(|&&c| c == 0).count();
+    let cur_completed = completed(current_stats);
 
-    if let Some(rev_stats) = git_rev_stats {
-        completed_objects_str.insert_str(
-            0,
-            &format!(
-                " -> {}/{}",
-                rev_stats
-                    .remaining_functions
-                    .values()
-                    .filter(|&&c| c == 0)
-                    .count(),
-                rev_stats.object_count
-            ),
-        );
-    }
+    let completed_objects_str = if let Some(rev) = git_rev_stats {
+        cmp_fmt(
+            format!("{}/{}", completed(rev), rev.object_count),
+            format!("{cur_completed}/{}", current_stats.object_count),
+        )
+    } else {
+        format!("{cur_completed}/{}", current_stats.object_count)
+    };
 
     println!(
         "  {}: {completed_objects_str}\n",
@@ -99,34 +86,32 @@ fn print_current_progress(current_stats: &ProgressStats, git_rev_stats: Option<&
     );
 
     for (status, current_count) in current_stats.function_statuses {
-        let currrent_code_size = current_stats.code_size[status];
-        let mut count_str = format!("{current_count:>7}");
-        let mut count_percentage_str = make_three_decimal_percentage(current_count, current_stats.total_function_count);
-        let mut size_percentage_str = make_three_decimal_percentage(currrent_code_size, current_stats.total_code_size);
+        let current_code_size = current_stats.code_size[status];
 
-        if let Some(rev_stats) = git_rev_stats {
-            let rev_code_size = rev_stats.code_size[status];
-            let rev_count = rev_stats.function_statuses[status];
-
-            count_str.insert_str(0, &format!("{rev_count:>7} -> "));
-            count_percentage_str.insert_str(
-                0,
-                &format!(
-                    "{} -> ",
-                    make_three_decimal_percentage(rev_count, rev_stats.total_function_count)
+        let (count_str, count_pct_str, size_pct_str) = if let Some(rev) = git_rev_stats {
+            let rev_count = rev.function_statuses[status];
+            let rev_code_size = rev.code_size[status];
+            (
+                cmp_fmt(format!("{rev_count:>7}"), format!("{current_count:>7}")),
+                cmp_fmt(
+                    pct(rev_count, rev.total_function_count),
+                    pct(current_count, current_stats.total_function_count),
                 ),
-            );
-            size_percentage_str.insert_str(
-                0,
-                &format!(
-                    "{} -> ",
-                    make_three_decimal_percentage(rev_code_size, rev_stats.total_code_size)
+                cmp_fmt(
+                    pct(rev_code_size, rev.total_code_size),
+                    pct(current_code_size, current_stats.total_code_size),
                 ),
-            );
-        }
+            )
+        } else {
+            (
+                format!("{current_count:>7}"),
+                pct(current_count, current_stats.total_function_count),
+                pct(current_code_size, current_stats.total_code_size),
+            )
+        };
 
         println!(
-            "{count_str} {} ({count_percentage_str} | size: {size_percentage_str})",
+            "{count_str} {} ({count_pct_str} | size: {size_pct_str})",
             status.description().color(status.color()),
         );
     }
@@ -145,27 +130,16 @@ fn print_changed_objects(current_stats: &ProgressStats, git_rev_stats: &Progress
 }
 
 fn print_raw_matching_data(stats: &ProgressStats) {
-    println!(
-        "matching={}",
-        make_three_decimal_percentage(
-            stats.function_statuses[Status::Matching],
-            stats.total_function_count
-        )
-    );
-    println!(
-        "minor={}",
-        make_three_decimal_percentage(
-            stats.function_statuses[Status::NonMatchingMinor],
-            stats.total_function_count
-        )
-    );
-    println!(
-        "major={}",
-        make_three_decimal_percentage(
-            stats.function_statuses[Status::NonMatchingMajor],
-            stats.total_function_count
-        )
-    );
+    for (label, status) in [
+        ("matching", Status::Matching),
+        ("minor", Status::NonMatchingMinor),
+        ("major", Status::NonMatchingMajor),
+    ] {
+        println!(
+            "{label}={}",
+            pct(stats.function_statuses[status], stats.total_function_count)
+        );
+    }
 }
 
 fn print_namespace_progress(main_namespaces: &[NamespaceStat]) {
@@ -176,7 +150,7 @@ fn print_namespace_progress(main_namespaces: &[NamespaceStat]) {
             "{:>7} {} ({})",
             namespace_stat.decompiled_functions,
             namespace_stat.name.cyan(),
-            make_three_decimal_percentage(
+            pct(
                 namespace_stat.decompiled_functions,
                 namespace_stat.total_functions
             ),
@@ -215,26 +189,7 @@ fn calc_file_list_stats(file_list: &FileList) -> ProgressStats {
             stats.total_function_count += 1;
             stats.total_code_size += function.size as usize;
 
-            if let Some(mut root_namespace) = functions::demangle_str(function.name())
-                .ok()
-                .and_then(|n| n.split_once("::").map(|(a, _)| a.to_string()))
-            {
-                if root_namespace
-                    .chars()
-                    .next()
-                    .unwrap_or_default()
-                    .is_uppercase()
-                {
-                    root_namespace = String::from("Global namespace (game)");
-                }
-                if root_namespace != "std" {
-                    let namespace_info = namespaces.entry(root_namespace).or_default();
-                    namespace_info.1 += 1;
-                    if function.is_decompiled() {
-                        namespace_info.0 += 1;
-                    }
-                }
-            }
+            accumulate_namespace(function, &mut namespaces);
         }
         let remaining_functions = object
             .text_section
@@ -248,26 +203,50 @@ fn calc_file_list_stats(file_list: &FileList) -> ProgressStats {
         }
     }
 
-    stats.main_namespaces = namespaces
-        .into_iter()
-        .filter(|(_, (_, total_functions))| *total_functions > 500)
-        .map(
-            |(name, (decompiled_functions, total_functions))| NamespaceStat {
-                name,
-                total_functions,
-                decompiled_functions,
-            },
-        )
-        .collect();
-
-    stats
-        .main_namespaces
-        .sort_unstable_by_key(|b| std::cmp::Reverse(b.total_functions));
+    stats.main_namespaces = build_namespace_stats(namespaces);
 
     stats
 }
 
-fn make_three_decimal_percentage(num: usize, total: usize) -> String {
+fn pct(num: usize, total: usize) -> String {
     let percentage = num as f32 / total as f32 * 100.0;
     format!("{percentage:.3}%")
+}
+
+fn cmp_fmt(rev: impl std::fmt::Display, cur: impl std::fmt::Display) -> String {
+    format!("{rev} -> {cur}")
+}
+
+fn accumulate_namespace(func: &functions::Info, namespaces: &mut HashMap<String, (usize, usize)>) {
+    if let Some(root_namespace) = functions::demangle_str(func.name())
+        .ok()
+        .and_then(|n| n.split_once("::").map(|(a, _)| a.to_string()))
+    {
+        let root_namespace = if root_namespace.starts_with(char::is_uppercase) {
+            "Global namespace (game)".into()
+        } else {
+            root_namespace
+        };
+        if root_namespace != "std" {
+            let (decompiled, total) = namespaces.entry(root_namespace).or_default();
+            *total += 1;
+            if func.is_decompiled() {
+                *decompiled += 1;
+            }
+        }
+    }
+}
+
+fn build_namespace_stats(namespaces: HashMap<String, (usize, usize)>) -> Vec<NamespaceStat> {
+    let mut stats: Vec<_> = namespaces
+        .into_iter()
+        .filter(|(_, (_, total))| *total > 500)
+        .map(|(name, (decompiled, total))| NamespaceStat {
+            name,
+            total_functions: total,
+            decompiled_functions: decompiled,
+        })
+        .collect();
+    stats.sort_unstable_by_key(|b| std::cmp::Reverse(b.total_functions));
+    stats
 }
