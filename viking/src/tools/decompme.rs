@@ -487,7 +487,7 @@ fn main() -> Result<()> {
         function_info.size as u64,
     )?;
     let disassembly = get_disassembly(function_info, &function)?;
-    let function_offset = function_info.addr;
+    let function_offset = function_info.offset;
 
     let mut compiler_flags = decomp_me_config.default_compile_flags.clone();
     let mut context = "".to_string();
