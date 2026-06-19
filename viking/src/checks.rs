@@ -8,6 +8,7 @@ use std::convert::TryInto;
 use std::iter::zip;
 use std::path::{Path, PathBuf};
 
+use crate::functions::AddressLabel;
 use crate::{capstone_utils::*, elf, functions, repo, ui};
 
 struct DataSymbol {
@@ -459,6 +460,17 @@ impl<'a, 'functions, 'orig_elf, 'decomp_elf>
             .or_else(|| elf::plt_name_to_addr(self.decomp_elf, name))
         else {
             let actual_symbol_name = self.translate_decomp_addr_to_name(decomp_addr);
+
+            if let Some(call_sym) = actual_symbol_name {
+                if let AddressLabel::Multi(ref labels) = info.label {
+                    for label in &labels[1..] {
+                        if call_sym == label {
+                            return None;
+                        }
+                    }
+                }
+            }
+
             return Some(MismatchCause::FunctionCall(ReferenceDiff {
                 referenced_symbol: orig_addr,
                 expected_ref_in_decomp: 0,
