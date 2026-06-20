@@ -73,7 +73,12 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn print_current_progress(current_stats: &ProgressStats, git_rev_stats: Option<&ProgressStats>) {
-    let completed = |s: &ProgressStats| s.remaining_functions.values().filter(|&&c| c == 0).count();
+    let completed = |s: &ProgressStats| {
+        s.incomplete_remaining_functions
+            .values()
+            .filter(|&&c| c == 0)
+            .count()
+    };
     let cur_completed = completed(current_stats);
 
     let completed_objects_str = if let Some(rev) = git_rev_stats {
@@ -123,9 +128,9 @@ fn print_current_progress(current_stats: &ProgressStats, git_rev_stats: Option<&
 }
 
 fn print_changed_objects(current_stats: &ProgressStats, git_rev_stats: &ProgressStats) {
-    for (object_name, remaining_functions) in &current_stats.remaining_functions {
+    for (object_name, remaining_functions) in &current_stats.incomplete_remaining_functions {
         if git_rev_stats
-            .remaining_functions
+            .incomplete_remaining_functions
             .get(object_name)
             .is_none_or(|r| remaining_functions < r)
         {
@@ -147,14 +152,14 @@ fn print_raw_matching_data(stats: &ProgressStats) {
     }
 }
 
-fn print_namespace_progress(main_namespaces: &[NamespaceStat]) {
+fn print_namespace_progress(main_namespaces: &[(String, NamespaceStat)]) {
     println!("\nNamespace progress:");
 
-    for namespace_stat in main_namespaces {
+    for (name, namespace_stat) in main_namespaces {
         println!(
             "{:>7} {} ({})",
             namespace_stat.decompiled_functions,
-            namespace_stat.name.cyan(),
+            name.cyan(),
             pct(
                 namespace_stat.decompiled_functions,
                 namespace_stat.total_functions
@@ -163,20 +168,21 @@ fn print_namespace_progress(main_namespaces: &[NamespaceStat]) {
     }
 }
 
+#[derive(Default)]
 struct NamespaceStat {
-    name: String,
     total_functions: usize,
     decompiled_functions: usize,
 }
 
 #[derive(Default)]
 struct ProgressStats {
-    remaining_functions: HashMap<String, usize>,
+    /// Stores the remaining functions for every incomplete but not fully unimplemented object
+    incomplete_remaining_functions: HashMap<String, usize>,
     function_statuses: EnumMap<functions::Status, usize>,
     code_size: EnumMap<functions::Status, usize>,
     total_function_count: usize,
     total_code_size: usize,
-    main_namespaces: Vec<NamespaceStat>,
+    main_namespaces: Vec<(String, NamespaceStat)>,
     object_count: usize,
 }
 
@@ -185,7 +191,7 @@ fn calc_file_list_stats(file_list: &FileList) -> ProgressStats {
         object_count: file_list.len(),
         ..Default::default()
     };
-    let mut namespaces: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut namespaces: HashMap<String, NamespaceStat> = HashMap::new();
     for (object_name, object) in file_list {
         for function in &object.text_section {
             stats.function_statuses[function.status] += 1;
@@ -203,12 +209,20 @@ fn calc_file_list_stats(file_list: &FileList) -> ProgressStats {
             .count();
         if remaining_functions != object.text_section.len() {
             stats
-                .remaining_functions
+                .incomplete_remaining_functions
                 .insert(object_name.clone(), remaining_functions);
         }
     }
 
-    stats.main_namespaces = build_namespace_stats(namespaces);
+    const MAIN_NAMESPACE_MIN_FUNCTIONS: usize = 500;
+
+    stats.main_namespaces = namespaces
+        .into_iter()
+        .filter(|(_, stats)| stats.total_functions > MAIN_NAMESPACE_MIN_FUNCTIONS)
+        .collect();
+    stats
+        .main_namespaces
+        .sort_unstable_by_key(|(_, stats)| std::cmp::Reverse(stats.total_functions));
 
     stats
 }
@@ -222,7 +236,7 @@ fn cmp_fmt(rev: impl std::fmt::Display, cur: impl std::fmt::Display) -> String {
     format!("{rev} -> {cur}")
 }
 
-fn accumulate_namespace(func: &functions::Info, namespaces: &mut HashMap<String, (usize, usize)>) {
+fn accumulate_namespace(func: &functions::Info, namespaces: &mut HashMap<String, NamespaceStat>) {
     if let Some(root_namespace) = functions::demangle_str(func.name())
         .ok()
         .and_then(|n| n.split_once("::").map(|(a, _)| a.to_string()))
@@ -233,25 +247,11 @@ fn accumulate_namespace(func: &functions::Info, namespaces: &mut HashMap<String,
             root_namespace
         };
         if root_namespace != "std" {
-            let (decompiled, total) = namespaces.entry(root_namespace).or_default();
-            *total += 1;
+            let stats = namespaces.entry(root_namespace).or_default();
+            stats.total_functions += 1;
             if func.is_decompiled() {
-                *decompiled += 1;
+                stats.decompiled_functions += 1;
             }
         }
     }
-}
-
-fn build_namespace_stats(namespaces: HashMap<String, (usize, usize)>) -> Vec<NamespaceStat> {
-    let mut stats: Vec<_> = namespaces
-        .into_iter()
-        .filter(|(_, (_, total))| *total > 500)
-        .map(|(name, (decompiled, total))| NamespaceStat {
-            name,
-            total_functions: total,
-            decompiled_functions: decompiled,
-        })
-        .collect();
-    stats.sort_unstable_by_key(|b| std::cmp::Reverse(b.total_functions));
-    stats
 }
