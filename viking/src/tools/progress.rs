@@ -50,8 +50,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     let git_rev_stats = if !args.compare.is_empty() {
+        let common_ancestor = repo::get_first_common_ancestor_of_git_revs("HEAD", &args.compare)?;
         let rev_file_list_content =
-            repo::get_file_contents_at_git_rev(&args.compare, &repo::get_config().file_list)?;
+            repo::get_file_contents_at_git_rev(&common_ancestor, &repo::get_config().file_list)?;
         let rev_file_list = functions::parse_file_list_from_str(&rev_file_list_content)?;
         Some(calc_file_list_stats(&rev_file_list))
     } else {
@@ -129,12 +130,13 @@ fn print_current_progress(current_stats: &ProgressStats, git_rev_stats: Option<&
 
 fn print_changed_objects(current_stats: &ProgressStats, git_rev_stats: &ProgressStats) {
     for (object_name, remaining_functions) in &current_stats.incomplete_remaining_functions {
-        if git_rev_stats
+        let rev_obj_remaining_functions = git_rev_stats
             .incomplete_remaining_functions
-            .get(object_name)
-            .is_none_or(|r| remaining_functions < r)
-        {
+            .get(object_name);
+        if rev_obj_remaining_functions.is_none_or(|r| remaining_functions < r) {
             println!("{object_name}");
+        } else if remaining_functions > rev_obj_remaining_functions.unwrap() {
+            println!("Regression in: {object_name}")
         }
     }
 }

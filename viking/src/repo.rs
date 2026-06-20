@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use lazy_static::lazy_static;
 use std::{path::PathBuf, process::Command};
 
@@ -93,4 +93,22 @@ pub fn get_file_contents_at_git_rev(rev: &str, path: &str) -> Result<String> {
     }
 
     Ok(String::from_utf8(output.stdout)?)
+}
+
+pub fn get_first_common_ancestor_of_git_revs(rev1: &str, rev2: &str) -> Result<String> {
+    let output = Command::new("git")
+        .current_dir(get_repo_root()?)
+        .arg("merge-base")
+        .arg("-a")
+        .arg(rev1)
+        .arg(rev2)
+        .output()?;
+    if !output.status.success() {
+        bail!("Failed to get common ancestor for revs {rev1} and {rev2}");
+    }
+
+    let output = String::from_utf8(output.stdout)?;
+    let line = output.lines().next().context("output is empty")?;
+
+    Ok(line.to_string())
 }
